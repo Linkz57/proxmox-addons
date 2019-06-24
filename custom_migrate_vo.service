@@ -1,0 +1,16 @@
+[Unit]
+Description=Custom - migrate VOs before shutdown or reboot
+Before=shutdown.target reboot.target halt.target
+Wants=zfs.target zfs-import.target zfs-mount.service zfs-share.service networking.service ssh.service pve-storage.target pve-cluster.service pvestatd.service pve-ha-lrm.service pvesr.service pveproxy.service pve-guests.service pve-ha-crm.service
+After=zfs.target zfs-import.target zfs-mount.service zfs-share.service networking.service ssh.service pve-storage.target pve-cluster.service pvestatd.service pve-ha-lrm.service pvesr.service pveproxy.service pve-guests.service pve-ha-crm.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/bin/true
+ExecStop=/etc/systemd/system/custom_migrate_vo.service.d/custom_migrate_vo.sh
+TimeoutSec=120
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target
