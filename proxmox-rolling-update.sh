@@ -1,13 +1,13 @@
 #!/bin/bash
 ## proxmox-rolling-update.sh
-## version 1.16
+## version 1.22
 ## The goal here is to perform a rolling update and reboot of every node.
 ##
 ## To do that, this script first shuts down a "pool" of VMs and containers that a human previous said was ok to shut down whenever.
 ## Then this script migrates offline containers and VMs to the first other online node it finds.
 ## Then, for each running container and VM, look through each node until one is found that,
 ## given a margin of safety, has enough resources to accept a live migration.
-## Then this script double-checks to make sure everything is migrated off, 
+## Then this script double-checks to make sure everything is migrated off,
 ## then updates and (assuming the update succeeded) finally reboots.
 ##
 ##
@@ -25,11 +25,13 @@
 
 ## A human set up a pool (tag) and filled it with VMs and Containers that can be shut down whenever. What's the name of that pool?
 pool_to_shutdown="party"
+## TODO: break the shutdown out into another script. No need to run that on every node, just once per roll is fine.
 ## I don't want to use more than 80% of my RAM doing anything. Type this variable as a fraction. FYI: live VM migrations require a LOT of free RAM on the receiving node.
 ramFillLine="6/10"
+## TODO: check this ramFillLine. I just watched it silently fail. 2019-07-17_11-57-06
 ## If a node is using more than 60% of all its CPU cores, then don't migrate to it. Just type in the percentage number without the %
 cpuFillLine="60"
-## TODO: fix cpuFillLine checks down below. I'm fairly sure it's busted.
+
 
 
 
@@ -41,6 +43,8 @@ cpuFillLine="60"
 
 
 ## If there are no pending updates, then don't bother doing anything.
+printf "\n\n"
+echo "Looking for updates"
 apt update > /dev/null 2>/dev/null
 
 pendingUpdates=$(pkcon -p get-updates | tail -n +"$(pkcon -p get-updates | grep -n Results | cut -d':' -f1)")
@@ -52,8 +56,10 @@ fi
 
 
 ## shutdown some VOs if the cluster is healthy
-if pvesh get /cluster/status --output-format json-pretty | 
-grep '\"quorate\" \: 1'
+printf "\n\n"
+echo "shutting down some unneeded VMs and Containers"
+if pvesh get /cluster/status --output-format json-pretty |
+grep '\"quorate\" \: 1' > /dev/null
 then
 	## shut down all Virtual Objects that a human had previously said was OK to shutdown whenever
 	for vo in $(pvesh get /pools/$pool_to_shutdown --output-format json-pretty |
@@ -84,8 +90,10 @@ safeToReboot=false
 
 
 ## migrate offline Containers if the cluster is healthy
-if pvesh get /cluster/status --output-format json-pretty | 
-grep '\"quorate\" \: 1'
+printf "\n\n"
+echo "Migrating offline Containers"
+if pvesh get /cluster/status --output-format json-pretty |
+grep '\"quorate\" \: 1' > /dev/null
 then
 	## migrate only the ones that are offline, to the first online node
 	for offlinelxc in $(pvesh get /nodes/localhost/lxc --noborder 1 --noheader 1 |
@@ -113,8 +121,10 @@ fi
 
 
 ## migrate offline VMs if the cluster is healthy
-if pvesh get /cluster/status --output-format json-pretty | 
-grep '\"quorate\" \: 1'
+printf "\n\n"
+echo "Migrating offline VMs"
+if pvesh get /cluster/status --output-format json-pretty |
+grep '\"quorate\" \: 1' > /dev/null
 then
 	## Find all VMs using the Proxmox API, then cut out everything except the actual VMID. Same as above.
 	for offlineqemu in $(pvesh get /nodes/localhost/qemu --noborder 1 --noheader 1 |
@@ -146,8 +156,10 @@ fi
 
 
 ## migrate running Containers if the cluster is healthy
-if pvesh get /cluster/status --output-format json-pretty | 
-grep '\"quorate\" \: 1'
+printf "\n\n"
+echo "Migrating running containers"
+if pvesh get /cluster/status --output-format json-pretty |
+grep '\"quorate\" \: 1' > /dev/null
 then
 	## For each Container running on localhost
 	for lxcRemaining in $(pvesh get /nodes/localhost/lxc --noborder 1 --noheader 1 |
@@ -217,7 +229,7 @@ then
 				;;
 
 			esac
-			
+
 			## multiply used RAM each by their unit. Proxmox seems to ship with BC.
 			case ${resourceArray[4]} in
 
@@ -273,8 +285,9 @@ fi
 ## Let's wait some seconds after all HA requests have been sent to see if any are actually in progress.
 ## TODO: look for RAM migration and LVM local disks.
 
-echo "Looking for in-progress migrations..."
-sleep 20
+printf "\n\n"
+echo "Looking for in-progress migrations to or from this node..."
+sleep 40
 while ps aux |
 grep -v grep |
 grep -E "((zfs )(recv)|(send))|(/usr/bin/perl /usr/sbin/pvesm import)"
@@ -289,6 +302,8 @@ echo "I think everything has finished migrating."
 
 
 ## Were all Containers migrated off? If so, start migrating VMs
+printf "\n\n"
+echo "Migrating running VMs"
 if [[ $(pvesh get /nodes/localhost/lxc --noborder 1 --noheader 1 | wc -l) -gt 0 ]]
 then
 	echo "I've tried to migrate off all LXC containers, but I couldn't find any nodes big enough for some of these containers. I will not keep going, nor will I attempt to migrate any VMs."
@@ -301,9 +316,9 @@ else
 
 
 	echo "$(hostname) is drained of LXC containers. Time to move onto QEMU VMs."
-	
+
 	## migrate running VMs if the cluster is healthy
-	if pvesh get /cluster/status --output-format json-pretty | 
+	if pvesh get /cluster/status --output-format json-pretty |
 	grep '\"quorate\" \: 1'
 	then
 		## For each VM running on localhost
@@ -366,7 +381,7 @@ else
 					;;
 
 				esac
-				
+
 				## multiply used RAM each by their unit. Proxmox seems to ship with BC.
 				case ${resourceArray[4]} in
 
@@ -417,8 +432,9 @@ else
 	## Let's wait some seconds after all HA requests have been sent to see if any are actually in progress.
 	## TODO: look for RAM migration and LVM local disks.
 
-	echo "Looking for in-progress migrations..."
-	sleep 20
+	printf "\n\n"
+	echo "Looking for in-progress migrations to or from this node..."
+	sleep 40
 	while ps aux |
 	grep -v grep |
 	grep -E "((zfs )(recv)|(send))|(/usr/bin/perl /usr/sbin/pvesm import)"
@@ -448,7 +464,8 @@ fi
 
 
 ## update and if updated successfully, then reboot
-
+printf "\n\n"
+echo "Updating, finally"
 if $safeToReboot
 then
 	apt update &&
